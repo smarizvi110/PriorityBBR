@@ -7,11 +7,13 @@ from segment import Segment, SEGMENT_TYPE_DATA, SEGMENT_TYPE_ACK
 
 class TransportReceiver:
     def __init__(self, local_ip="0.0.0.0", local_port=config.RECEIVER_PORT,
-                 remote_ip=config.RECEIVER_IP, remote_port_ack=config.SENDER_PORT): # remote_ip isn't strictly needed if just listening
+                 remote_ip=config.RECEIVER_IP, remote_port_ack=config.SENDER_PORT, logger=None): # remote_ip isn't strictly needed if just listening
+        self.logger = logger # Add logger parameter
+        self.logger.initialize_receiver_log() # Initialize receiver log
         self.listen_addr = (local_ip, local_port)
         self.ack_dest_addr = (remote_ip, remote_port_ack) # To send ACKs back to sender's listening port
-        
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.sock.bind(self.listen_addr)
         
         self.running = True
@@ -47,6 +49,11 @@ class TransportReceiver:
         try:
             self.sock.sendto(ack_segment.to_bytes(), self.ack_dest_addr)
             # print(f"[Transport Receiver] Sent ACK for {seq_num_to_ack} to {self.ack_dest_addr}")
+            if self.logger:
+                self.logger.log_receiver_event( # Logging ACK sent
+                    "ACK_TX", seq_num_to_ack, None, 0, 
+                    sender_addr_str=str(self.ack_dest_addr)
+                )
         except Exception as e:
             print(f"Error sending ACK: {e}")
 
@@ -65,12 +72,24 @@ class TransportReceiver:
                     self._send_ack(segment.seq_num)
 
                     if segment.seq_num not in self.received_seq_nums:
+                        if self.logger:
+                            self.logger.log_receiver_event(
+                                "DATA_RX", segment.seq_num, segment.priority, len(segment.payload),
+                                sender_addr_str=str(sender_addr),
+                                info=""
+                            )
                         self.received_seq_nums.add(segment.seq_num)
                         if self.on_data_received_callback:
                             # Pass priority along with payload to the app
                             self.on_data_received_callback(segment.payload, segment.priority, segment.seq_num)
-                    # else:
+                    else:
                         # print(f"[Transport Receiver] Duplicate DATA segment {segment.seq_num} received. ACKed again.")
+                        if self.logger:
+                            self.logger.log_receiver_event(
+                                "DATA_RX", segment.seq_num, segment.priority, len(segment.payload),
+                                sender_addr_str=str(sender_addr),
+                                info="Duplicate"
+                        )
                 
             except socket.timeout: # This won't happen with default blocking sockets
                 continue

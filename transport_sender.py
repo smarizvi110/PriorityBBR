@@ -9,9 +9,12 @@ from segment import Segment, SEGMENT_TYPE_DATA, SEGMENT_TYPE_ACK
 
 class TransportSender:
     def __init__(self, local_ip="0.0.0.0", local_port=config.SENDER_PORT,
-                 remote_ip=config.RECEIVER_IP, remote_port=config.RECEIVER_PORT):
+                 remote_ip=config.RECEIVER_IP, remote_port=config.RECEIVER_PORT, logger=None):
+        self.logger = logger # Add logger parameter
+        self.logger.initialize_sender_log()
         self.remote_addr = (remote_ip, remote_port)
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.sock.bind((local_ip, local_port))
         self.sock.settimeout(0.01) # Non-blocking for ACK reception
 
@@ -66,6 +69,11 @@ class TransportSender:
             offset += config.MAX_SEGMENT_PAYLOAD_SIZE
             segments_created_count +=1
         # print(f"[Sender App->Transport] Queued {segments_created_count} segments (Prio:{priority}) for data size: {len(app_data)}")
+        if self.logger:
+                self.logger.log_sender_event(
+                    "APP_QUEUE", segment.seq_num, segment.priority, len(segment.payload),
+                    info=f"Data queued by app (orig size: {len(app_data)})"
+            )
 
 
     def _listen_for_acks(self):
@@ -75,6 +83,12 @@ class TransportSender:
                 ack_segment = Segment.from_bytes(data)
                 if ack_segment and ack_segment.type == SEGMENT_TYPE_ACK:
                     # print(f"[Transport Sender] RX ACK: {ack_segment.ack_num}")
+                    if self.logger:
+                        self.logger.log_sender_event(
+                            "ACK_RX", ack_segment.ack_num, None, 0, # No priority for ACK itself
+                            cwnd=self.current_cwnd, in_flight=self.in_flight_count,
+                            info="Segment ACKed"
+                    )
                     if ack_segment.ack_num in self.unacked_segments:
                         del self.unacked_segments[ack_segment.ack_num]
                         self.in_flight_count = max(0, self.in_flight_count - 1)
@@ -99,6 +113,12 @@ class TransportSender:
             if now - send_time > config.ACK_TIMEOUT:
                 if retries < config.MAX_RETRIES:
                     print(f"[Transport Sender] Timeout for segment {seq_num}. Marking for Retransmit (Attempt {retries+1}).")
+                    if self.logger:
+                        self.logger.log_sender_event(
+                            "MARK_RETRANSMIT", segment.seq_num, segment.priority, len(segment.payload),
+                            retry_attempt=retries + 1, cwnd=self.current_cwnd, in_flight=self.in_flight_count,
+                            info="Timeout"
+                    )
                     # Don't resend immediately, let the main sending logic pick it up with priority
                     # For simplicity, we'll re-queue it with high priority to ensure it's considered soon.
                     # A more complex system might have a separate retransmit queue or different logic.
@@ -108,6 +128,13 @@ class TransportSender:
                     self.unacked_segments[seq_num] = (segment, now, retries + 1) # Update send_time and retries
                 else:
                     print(f"[Transport Sender] Max retries for segment {seq_num}. Giving up.")
+                    if self.logger:
+                        self.logger.log_sender_event(
+                            "DROP_MAX_RETRY", seq_num, self.unacked_segments[seq_num][0].priority, # Get prio from stored seg
+                            len(self.unacked_segments[seq_num][0].payload),
+                            retry_attempt=config.MAX_RETRIES, cwnd=self.current_cwnd, in_flight=self.in_flight_count,
+                            info="Max retries reached"
+                        )
                     del self.unacked_segments[seq_num]
                     self.in_flight_count = max(0, self.in_flight_count - 1)
                     # Basic CWND reduction on "loss"
@@ -162,12 +189,22 @@ class TransportSender:
                              is_retransmit_from_queue = True
                              # print(f"[Transport Sender->Network] Resending from Q: {segment_to_send} (from {source_queue_name}, Attempt {retries})")
 
-
                     self.sock.sendto(segment_to_send.to_bytes(), self.remote_addr)
                     self.last_send_time = time.time() # Update last send time for pacing
                     
                     if not is_retransmit_from_queue: # Don't double print for retransmits from queue
                         print(f"[Transport Sender->Network] Sent: {segment_to_send} (from {source_queue_name})")
+                    
+                    event_type = "SENT_RETRANSMIT" if is_retransmit_from_queue else "SENT_NEW"
+                    retry_val = self.unacked_segments[segment_to_send.seq_num][2] if segment_to_send.seq_num in self.unacked_segments else 0
+
+                    if self.logger:
+                        self.logger.log_sender_event(
+                            event_type, segment_to_send.seq_num, segment_to_send.priority, len(segment_to_send.payload),
+                            queue_source=source_queue_name, cwnd=self.current_cwnd, in_flight=self.in_flight_count + 1, # +1 because it's about to be in flight
+                            retry_attempt=retry_val,
+                            info=""
+                        )
                     
                     # Add/Update in unacked_segments only if it's not already there with a higher retry count (from immediate resend logic)
                     # Or if it's a genuinely new send

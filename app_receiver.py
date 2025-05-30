@@ -3,6 +3,7 @@ import time
 import datetime
 import config
 from transport_receiver import TransportReceiver
+from logger import CSVLogger # Add import
 
 def handle_received_data(payload: bytes, priority: int, seq_num: int):
     timestamp = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
@@ -15,7 +16,8 @@ def handle_received_data(payload: bytes, priority: int, seq_num: int):
     print(f"[{timestamp}] [App Receiver] <<<< PRIO:{prio_str} (Seq:{seq_num}) -- Data: {decoded_payload}")
 
 def main():
-    receiver_transport = TransportReceiver(remote_ip=config.RECEIVER_IP, remote_port_ack=config.SENDER_PORT) # Pass sender IP for ACKs
+    main_logger = CSVLogger(filename_prefix="priority_sim_receiver") # For receiver
+    receiver_transport = TransportReceiver(logger=main_logger, remote_ip=config.RECEIVER_IP, remote_port_ack=config.SENDER_PORT) # Pass logger
     receiver_transport.set_data_callback(handle_received_data)
     receiver_transport.start()
 
