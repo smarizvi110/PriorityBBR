@@ -1,4 +1,4 @@
-# config.py - UPDATES
+# config.py
 RECEIVER_IP = "127.0.0.1"
 RECEIVER_PORT = 12345
 SENDER_PORT = 12346 # For ACKs
@@ -21,3 +21,5 @@ SENDER_LOOP_INTERVAL = 0.05
 
 ACK_TIMEOUT = 0.5 # Seconds
 MAX_RETRIES = 2
+
+LOG_PREFIX = "priority_bbr_sim"

@@ -1,4 +1,4 @@
-# transport_sender.py - REVISED
+# transport_sender.py
 import socket
 import time
 import threading

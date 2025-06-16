@@ -5,7 +5,7 @@ from transport_sender import TransportSender
 from logger import CSVLogger # Add import
 
 def main():
-    main_logger = CSVLogger(filename_prefix="priority_sim_sender") # For sender
+    main_logger = CSVLogger(filename_prefix=f"{config.LOG_PREFIX}_sender_app") # For sender
     sender_transport = TransportSender(logger=main_logger) # Pass logger
     sender_transport.start()
 
